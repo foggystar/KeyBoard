@@ -57,3 +57,5 @@ dkms.conf
 # HelloWord folders
 HelloWord-Keyboard-main/
 HelloWordKeyboard-fork/
+**/.*
+**/.*/
