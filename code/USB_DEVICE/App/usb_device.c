@@ -23,10 +23,11 @@
 #include "usb_device.h"
 #include "usbd_core.h"
 #include "usbd_desc.h"
-#include "usbd_keyboard.h"
+#include "usbd_hid.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "usbd_keyboard.h"
+#define USBD_HID USBD_KEYBOARD
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN PV */
@@ -71,7 +72,7 @@ void MX_USB_DEVICE_Init(void)
   {
     Error_Handler();
   }
-  if (USBD_RegisterClass(&hUsbDeviceFS, USBD_KEYBOARD_CLASS) != USBD_OK)
+  if (USBD_RegisterClass(&hUsbDeviceFS, &USBD_HID) != USBD_OK)
   {
     Error_Handler();
   }

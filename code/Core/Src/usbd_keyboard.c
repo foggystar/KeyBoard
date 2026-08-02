@@ -378,14 +378,14 @@ static uint8_t  USBD_KEYBOARD_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx)
   USBD_LL_OpenEP(pdev, KEYBOARD_EPIN_ADDR, USBD_EP_TYPE_INTR, KEYBOARD_EPIN_SIZE);
   pdev->ep_in[KEYBOARD_EPIN_ADDR & 0xFU].is_used = 1U;
 
-  pdev->pClassData = USBD_malloc(sizeof(USBD_KEYBOARD_HandleTypeDef));
+  pdev->pClassData = USBD_malloc(sizeof(USBD_HID_HandleTypeDef));
 
   if (pdev->pClassData == NULL)
   {
     return USBD_FAIL;
   }
 
-  ((USBD_KEYBOARD_HandleTypeDef *)pdev->pClassData)->state = HID_IDLE;
+  ((USBD_HID_HandleTypeDef *)pdev->pClassData)->state = HID_IDLE;
 
   return USBD_OK;
 }
@@ -424,7 +424,7 @@ static uint8_t  USBD_KEYBOARD_DeInit(USBD_HandleTypeDef *pdev,
 static uint8_t  USBD_KEYBOARD_Setup(USBD_HandleTypeDef *pdev,
                                USBD_SetupReqTypedef *req)
 {
-  USBD_KEYBOARD_HandleTypeDef *hhid = (USBD_KEYBOARD_HandleTypeDef *) pdev->pClassData;
+  USBD_HID_HandleTypeDef *hhid = (USBD_HID_HandleTypeDef *) pdev->pClassData;
   uint16_t len = 0U;
   uint8_t *pbuf = NULL;
   uint16_t status_info = 0U;
@@ -543,7 +543,7 @@ uint8_t USBD_KEYBOARD_SendReport(USBD_HandleTypeDef  *pdev,
                             uint8_t *report,
                             uint16_t len)
 {
-  USBD_KEYBOARD_HandleTypeDef     *hhid = (USBD_KEYBOARD_HandleTypeDef *)pdev->pClassData;
+  USBD_HID_HandleTypeDef *hhid = (USBD_HID_HandleTypeDef *)pdev->pClassData;
 
   if ((pdev->dev_state != USBD_STATE_CONFIGURED) || (hhid == NULL))
   {
@@ -645,7 +645,7 @@ static uint8_t  USBD_KEYBOARD_DataIn(USBD_HandleTypeDef *pdev,
 
   /* Ensure that the FIFO is empty before a new transfer, this condition could
   be caused by  a new transfer before the end of the previous transfer */
-  ((USBD_KEYBOARD_HandleTypeDef *)pdev->pClassData)->state = HID_IDLE;
+  ((USBD_HID_HandleTypeDef *)pdev->pClassData)->state = HID_IDLE;
   return USBD_OK;
 }
 

@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* Includes ------------------------------------------------------------------*/
-#include  "usbd_ioreq.h"
+#include "usbd_hid.h"
 
 /** @addtogroup STM32_USB_DEVICE_LIBRARY
   * @{
@@ -72,31 +72,6 @@ extern "C" {
   */
 
 
-/** @defgroup USBD_CORE_Exported_TypesDefinitions
-  * @{
-  */
-typedef enum
-{
-  HID_IDLE = 0,
-  HID_BUSY,
-}
-HID_StateTypeDef;
-
-
-typedef struct
-{
-  uint32_t             Protocol;
-  uint32_t             IdleState;
-  uint32_t             AltSetting;
-  HID_StateTypeDef     state;
-}
-USBD_KEYBOARD_HandleTypeDef;
-/**
-  * @}
-  */
-
-
-
 /** @defgroup USBD_CORE_Exported_Macros
   * @{
   */
@@ -110,7 +85,6 @@ USBD_KEYBOARD_HandleTypeDef;
   */
 
 extern USBD_ClassTypeDef USBD_KEYBOARD;
-#define USBD_KEYBOARD_CLASS    &USBD_KEYBOARD
 /**
   * @}
   */
