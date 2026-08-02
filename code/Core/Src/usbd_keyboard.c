@@ -545,17 +545,23 @@ uint8_t USBD_KEYBOARD_SendReport(USBD_HandleTypeDef  *pdev,
 {
   USBD_KEYBOARD_HandleTypeDef     *hhid = (USBD_KEYBOARD_HandleTypeDef *)pdev->pClassData;
 
-  if (pdev->dev_state == USBD_STATE_CONFIGURED)
+  if ((pdev->dev_state != USBD_STATE_CONFIGURED) || (hhid == NULL))
   {
-    if (hhid->state == HID_IDLE)
-    {
-      hhid->state = HID_BUSY;
-      USBD_LL_Transmit(pdev,
-                       KEYBOARD_EPIN_ADDR,
-                       report,
-                       len);
-    }
+    return USBD_FAIL;
   }
+
+  if (hhid->state != HID_IDLE)
+  {
+    return USBD_BUSY;
+  }
+
+  hhid->state = HID_BUSY;
+  if (USBD_LL_Transmit(pdev, KEYBOARD_EPIN_ADDR, report, len) != USBD_OK)
+  {
+    hhid->state = HID_IDLE;
+    return USBD_FAIL;
+  }
+
   return USBD_OK;
 }
 
