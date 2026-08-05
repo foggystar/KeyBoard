@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55 最小 BLE 冒烟测试</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <span class="badge">Lesson 0001 · 约 15 分钟</span>
+  <h1>让自制 STM32WB55 板先广播、再连接</h1>
+  <p class="lede">目标不是立刻实现蓝牙键盘，而是得到三个可观察结果：CPU2 BLE Stack 启动、手机看到广播、手机成功连接并写入一个 GATT 特征。</p>
+
+  <div class="grid">
+    <div class="card"><strong>检查点 1</strong>CPU2 返回 <code>SHCI_Success</code></div>
+    <div class="card"><strong>检查点 2</strong>手机看到 <code>P2PSRV1</code></div>
+    <div class="card"><strong>检查点 3</strong>触发连接与写入事件</div>
+  </div>
+
+  <div class="callout warning"><strong>本板无 LSE：</strong>第一次测试使用 HSE/1024 作为 RF wake-up clock，并关闭 BLE 低功耗支持。这样可以验证功能，但不能获得最终键盘需要的最佳待机功耗。</div>
+
+  <h2>1. 先理解两份固件</h2>
+  <p>CPU1（Cortex-M4）运行你由 CubeMX 生成、通过 VS Code 烧录的应用。CPU2（Cortex-M0+）运行 ST 提供的加密 BLE Stack。只烧录 <code>main.elf</code> 不会自动安装 CPU2 Stack。</p>
+  <p>先生成应用并调试。如果 <code>SHCI_C2_BLE_Init()</code> 返回成功，说明 CPU2 Stack 已存在；若 CPU2 报告 FUS 正在运行或初始化失败，应停止并严格按本机 V1.24.0 <code>Release_Notes.html</code> 安装 <code>stm32wb5x_BLE_Stack_full_fw.bin</code>。不要凭旧教程猜安装地址。</p>
+
+  <h2>2. CubeMX 配置</h2>
+  <table>
+    <tr><th>页面</th><th>设置</th><th>目的</th></tr>
+    <tr><td>RCC</td><td>HSE = Crystal/Ceramic Resonator；LSE = Disable</td><td>32 MHz RF 基准；符合当前硬件</td></tr>
+    <tr><td>HSEM</td><td>Activate</td><td>双核共享资源同步</td></tr>
+    <tr><td>IPCC</td><td>Activate；开启 C1 RX occupied、C1 TX free 中断</td><td>CPU1/CPU2 邮箱</td></tr>
+    <tr><td>RTC</td><td>Activate Clock Source；Internal WakeUp；RTC_WKUP IRQ</td><td>WPAN timer server</td></tr>
+    <tr><td>RNG</td><td>Activate</td><td>BLE 安全和随机数</td></tr>
+    <tr><td>RF</td><td>RF1 = Activate</td><td>启用 2.4 GHz 无线子系统</td></tr>
+    <tr><td>STM32_WPAN</td><td>BLE；BLE Server Profile；Custom P2P Server = Enabled</td><td>生成可连接 GATT 服务</td></tr>
+  </table>
+
+  <h3>无 LSE 的时钟树</h3>
+  <ul class="checklist">
+    <li>RTC/LCD Source Mux 选择 <strong>HSE_RTC（HSE/32）</strong>。</li>
+    <li>RFWKP Clock Mux 选择 <strong>HSE/1024</strong>，得到 31.25 kHz。</li>
+    <li>CPU1 SYSCLK 可以继续使用当前的 MSI → PLL → 64 MHz；它不妨碍 RF 使用 HSE。</li>
+    <li>STM32_WPAN 参数中设置 <code>CFG_LPM_SUPPORTED = 0</code>。</li>
+    <li>如果板上没有完整的 2.2 µH SMPS 网络，设置 <code>CFG_USE_SMPS = 0</code>。</li>
+    <li>首次测试可关闭 UART trace，使用断点判断结果，减少引脚和 DMA 配置。</li>
+  </ul>
+
+  <p>生成后检查 <code>app_conf.h</code>：<code>CFG_BLE_LS_SOURCE</code> 应包含 <code>SHCI_C2_BLE_INIT_CFG_BLE_LS_CLK_HSE_1024</code>。如果仍是 <code>CLK_LSE</code>，不要烧录，先修正时钟选择或生成配置。</p>
+
+  <h2>3. main.c 不直接手写 BLE 协议</h2>
+  <p>CubeMX 会生成下面的调用顺序。关键是初始化一次，然后让 sequencer 永久运行：</p>
+  <pre><code>HAL_Init();
+MX_APPE_Config();              // HSE tuning，必须早于 SystemClock_Config
+SystemClock_Config();
+PeriphCommonClock_Config();
+MX_IPCC_Init();
+MX_GPIO_Init();
+MX_RTC_Init();
+MX_RNG_Init();
+MX_RF_Init();
+MX_APPE_Init();                // 启动 CPU2、BLE host、GATT/GAP 和广播
+
+while (1)
+{
+  MX_APPE_Process();           // 必须持续调用，不要换成空循环
+}</code></pre>
+  <p>不要在 <code>main()</code> 里再次调用 <code>APP_BLE_Init()</code>；<code>MX_APPE_Init()</code> 会在 CPU2 ready 事件后调用它。</p>
+
+  <h2>4. 用断点建立证据链</h2>
+  <table>
+    <tr><th>断点</th><th>成功现象</th><th>失败意味着</th></tr>
+    <tr><td><code>app_ble.c</code>：<code>SHCI_C2_BLE_Init()</code> 后</td><td><code>status == SHCI_Success</code></td><td>CPU2 Stack 缺失、不兼容或 CPU2 通信失败</td></tr>
+    <tr><td><code>app_ble.c</code>：<code>aci_gap_set_discoverable()</code> 后</td><td><code>ret == BLE_STATUS_SUCCESS</code></td><td>GAP/广播配置失败</td></tr>
+    <tr><td><code>HCI_LE_CONNECTION_COMPLETE_SUBEVT_CODE</code></td><td>手机连接时命中</td><td>能广播但连接时序、HSE 精度或 RF 链路可能异常</td></tr>
+    <tr><td><code>P2PS_STM_WRITE_EVT</code></td><td>手机写特征时命中</td><td>连接成功但 GATT 操作未到达应用</td></tr>
+  </table>
+
+  <h2>5. 手机测试</h2>
+  <ol>
+    <li>复位板子；P2P 示例通常只在有限时间内快速广播。</li>
+    <li>用 ST BLE Sensor/Toolbox 或通用 BLE 扫描工具寻找 <code>P2PSRV1</code>。</li>
+    <li>先把手机放在板子附近。能看到名称，证明 CPU2、HSE、发射链路和天线至少基本工作。</li>
+    <li>点击连接并保持 30 秒以上；连接断点应命中。</li>
+    <li>向 P2P Write 特征写入示例数据；<code>P2PS_STM_WRITE_EVT</code> 应命中。</li>
+  </ol>
+
+  <div class="callout"><strong>如何解释结果：</strong>能扫描但不能连接，优先检查 <code>CFG_BLE_LS_SOURCE</code> 是否真为 HSE/1024，以及 32 MHz HSE 的实际频偏。12 pF 晶振能产生 <code>HSERDY</code>，并不保证满足 BLE 的 ppm 要求。</div>
+
+  <h2>下一步</h2>
+  <p>完成 P2P 写入后，再移植本机官方 <code>BLE_Hid</code> 示例。那时只需要把 GATT/P2P 测试替换为 HID 服务和键盘 report，不要同时重新排查底层无线链路。</p>
+
+  <h2>主要资料</h2>
+  <ul>
+    <li><a href="https://www.st.com/resource/en/application_note/an5289-how-to-build-wireless-applications-with-stm32wb-mcus-stmicroelectronics.pdf">ST AN5289</a></li>
+    <li><a href="https://wiki.st.com/stm32mcu/wiki/Connectivity%3ASTM32WB_BLE_STM32CubeMX">ST STM32WB BLE CubeMX application conception</a></li>
+    <li><a href="../reference/stm32wb55-ble-bringup.html">本工程 BLE bring-up 速查页</a></li>
+  </ul>
+
+  <footer>完成后告诉我你停在哪个断点、手机是否看到 P2PSRV1，以及 <code>status/ret</code> 的值；下一课从真实结果继续。</footer>
+</main>
+</body>
+</html>

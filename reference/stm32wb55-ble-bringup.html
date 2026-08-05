@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55 BLE Bring-up 速查</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <span class="badge">速查</span>
+  <h1>STM32WB55 BLE Bring-up</h1>
+  <p class="lede">自制板、无 LSE、先验证广播与连接。</p>
+
+  <h2>CubeMX 必需模块</h2>
+  <table>
+    <tr><th>模块</th><th>设置</th></tr>
+    <tr><td>RCC</td><td>HSE = Crystal/Ceramic Resonator；LSE = Disable</td></tr>
+    <tr><td>HSEM</td><td>Activate</td></tr>
+    <tr><td>IPCC</td><td>Activate；开启 C1 RX occupied 与 C1 TX free 中断</td></tr>
+    <tr><td>RTC</td><td>Activate Clock Source；WakeUp = Internal；开启 RTC_WKUP 中断</td></tr>
+    <tr><td>RNG</td><td>Activate</td></tr>
+    <tr><td>RF</td><td>RF1 = Activate</td></tr>
+    <tr><td>STM32_WPAN</td><td>BLE；Server Profile；Custom P2P Server = Enabled</td></tr>
+  </table>
+
+  <h2>无 LSE 时钟</h2>
+  <ul class="checklist">
+    <li>RTC source = HSE/32。</li>
+    <li>RF wake-up source = HSE/1024。</li>
+    <li><code>CFG_LPM_SUPPORTED = 0</code>，首次测试不要进入 STOP/STOP2。</li>
+    <li>生成后确认 <code>CFG_BLE_LS_SOURCE</code> 使用 <code>CLK_HSE_1024</code>。</li>
+    <li>若没有完整 SMPS 电感网络，保持 <code>CFG_USE_SMPS = 0</code>。</li>
+  </ul>
+
+  <h2>main.c 结构</h2>
+  <pre><code>HAL_Init();
+MX_APPE_Config();
+SystemClock_Config();
+PeriphCommonClock_Config();
+MX_IPCC_Init();
+MX_GPIO_Init();
+MX_RTC_Init();
+MX_RNG_Init();
+MX_RF_Init();
+MX_APPE_Init();
+
+while (1) {
+  MX_APPE_Process();
+}</code></pre>
+
+  <h2>三个成功点</h2>
+  <ol>
+    <li><code>SHCI_C2_BLE_Init()</code> 返回 <code>SHCI_Success</code>。</li>
+    <li><code>aci_gap_set_discoverable()</code> 返回 <code>BLE_STATUS_SUCCESS</code>。</li>
+    <li>手机扫描到 <code>P2PSRV1</code>，能够连接并触发连接完成事件。</li>
+  </ol>
+
+  <footer>更完整步骤见 <a href="../lessons/0001-stm32wb55-ble-smoke-test.html">最小 BLE 冒烟测试课程</a>。</footer>
+</main>
+</body>
+</html>

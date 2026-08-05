@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55 系统模块速查</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <span class="badge">术语速查</span>
+  <h1>STM32WB55 的五个系统模块</h1>
+  <p class="lede">围绕 CPU1 应用核与 CPU2 无线核理解 RCC、HSEM、IPCC、RTC 和 RNG。</p>
+
+  <table>
+    <thead><tr><th>模块</th><th>全称</th><th>核心职责</th><th>直觉类比</th></tr></thead>
+    <tbody>
+      <tr><td><code>RCC</code></td><td>Reset and Clock Control</td><td>选择、分频和分配系统及外设时钟，并控制复位</td><td>配电室与节拍器</td></tr>
+      <tr><td><code>HSEM</code></td><td>Hardware Semaphore</td><td>让 CPU1 和 CPU2 对共享资源加硬件锁</td><td>会议室门锁</td></tr>
+      <tr><td><code>IPCC</code></td><td>Inter-Processor Communication Controller</td><td>在两个 CPU 之间发送通道通知和中断</td><td>双向门铃</td></tr>
+      <tr><td><code>RTC</code></td><td>Real-Time Clock</td><td>低速计时、日历、闹钟及定时唤醒</td><td>持续运行的闹钟</td></tr>
+      <tr><td><code>RNG</code></td><td>Random Number Generator</td><td>产生硬件随机数，供地址和安全协议使用</td><td>硬件骰子</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout"><strong>一句话：</strong>RCC 让各模块“有节拍”，HSEM 防止两个核“同时抢”，IPCC 告诉另一个核“有消息”，RTC 决定“何时做”，RNG 提供“不可预测的数”。</div>
+
+  <footer>配套课程：<a href="../lessons/0002-stm32wb55-five-system-blocks.html">五个模块如何共同支持 BLE</a></footer>
+</main>
+</body>
+</html>

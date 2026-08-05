@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55 BLE HID 键盘速查</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <span class="badge">可打印速查</span>
+  <h1>STM32WB55 BLE HID 键盘速查</h1>
+  <p class="lede">目标：把按键状态变成标准 HOGP Input Report，让 Windows、Android、iOS 将板子识别为键盘。</p>
+
+  <h2>标准服务</h2>
+  <table>
+    <tr><th>服务</th><th>UUID</th><th>作用</th></tr>
+    <tr><td>Human Interface Device Service</td><td><code>0x1812</code></td><td>Report Map、Input Report、Control Point 等 HID 数据</td></tr>
+    <tr><td>Battery Service</td><td><code>0x180F</code></td><td>电量百分比；HOGP HID Device 的标准组成</td></tr>
+    <tr><td>Device Information Service</td><td><code>0x180A</code></td><td>厂商、型号、PnP ID 等设备信息</td></tr>
+  </table>
+
+  <h2>8 字节键盘 Input Report</h2>
+  <table>
+    <tr><th>字节</th><th>含义</th><th>例子</th></tr>
+    <tr><td>0</td><td>Ctrl/Shift/Alt/GUI 修饰键位图</td><td><code>0x02</code> = Left Shift</td></tr>
+    <tr><td>1</td><td>保留，固定为 0</td><td><code>0x00</code></td></tr>
+    <tr><td>2..7</td><td>最多 6 个同时按下的键盘 Usage ID</td><td><code>0x04</code> = A 键</td></tr>
+  </table>
+  <pre><code>按下 A: 00 00 04 00 00 00 00 00
+释放全部: 00 00 00 00 00 00 00 00
+按下 Shift+A: 02 00 04 00 00 00 00 00</code></pre>
+  <div class="callout warning"><strong>必须发释放报告。</strong>只发按下、不发全零报告，主机会认为按键一直按住，可能产生连续输入。</div>
+
+  <h2>最小键盘 Report Map（无 LED Output Report）</h2>
+  <pre><code>static const uint8_t keyboard_report_map[] = {
+  0x05, 0x01,       /* Usage Page (Generic Desktop) */
+  0x09, 0x06,       /* Usage (Keyboard) */
+  0xA1, 0x01,       /* Collection (Application) */
+  0x05, 0x07,       /* Usage Page (Keyboard/Keypad) */
+  0x19, 0xE0, 0x29, 0xE7,
+  0x15, 0x00, 0x25, 0x01,
+  0x75, 0x01, 0x95, 0x08,
+  0x81, 0x02,       /* 8 modifier bits */
+  0x95, 0x01, 0x75, 0x08,
+  0x81, 0x01,       /* reserved byte */
+  0x95, 0x06, 0x75, 0x08,
+  0x15, 0x00, 0x25, 0x65,
+  0x05, 0x07, 0x19, 0x00, 0x29, 0x65,
+  0x81, 0x00,       /* six key usages */
+  0xC0
+};</code></pre>
+
+  <h2>STM32WB 发送 API</h2>
+  <pre><code>uint8_t report[8] = {0};
+
+report[2] = 0x04;  /* press A */
+HIDS_Update_Char(REPORT_CHAR_UUID, 0, 0, sizeof report, report);
+
+memset(report, 0, sizeof report);  /* release */
+HIDS_Update_Char(REPORT_CHAR_UUID, 0, 0, sizeof report, report);</code></pre>
+  <p>只有主机已配对并为 Input Report 开启 Notification 后才发送。不要在中断里直接连续调用 BLE ACI；由按键扫描代码投递任务，再让 STM32 sequencer 在主循环上下文发送。</p>
+
+  <h2>移植文件清单</h2>
+  <table>
+    <tr><th>位置</th><th>动作</th></tr>
+    <tr><td><code>Middlewares/.../svc/Src</code></td><td>加入官方同版本 <code>hids.c</code>；最终合规版再加入 <code>bas.c</code>、<code>dis.c</code></td></tr>
+    <tr><td><code>STM32_WPAN/App</code></td><td>新建最小 <code>hids_app.c/.h</code>；不复制官方鼠标菜单代码</td></tr>
+    <tr><td><code>ble_conf.h</code></td><td>加入 HIDS 数量、Report 数量/长度、键盘 Appearance 配置</td></tr>
+    <tr><td><code>app_ble.c</code></td><td>初始化 Report Map；广告中加入 <code>0x1812</code>；设置名称和安全参数</td></tr>
+    <tr><td><code>cmake/stm32cubemx/CMakeLists.txt</code></td><td>加入新增源文件；HID 验证成功后再移除 P2P 源文件</td></tr>
+  </table>
+
+  <h2>第一次主机测试</h2>
+  <ol>
+    <li>手机/电脑“忘记”旧的 P2P 设备，避免 GATT/HID 描述符缓存。</li>
+    <li>从操作系统的蓝牙设置配对，不要只用 nRF Connect 建立普通 GATT 连接。</li>
+    <li>打开文本输入框；确认主机已启用 Input Report Notification。</li>
+    <li>触发一次按下报告和一次释放报告；期望只出现一个 <code>a</code>。</li>
+  </ol>
+
+  <footer>主规范：<a href="https://www.bluetooth.com/specifications/specs/hid-over-gatt-profile-hogp/">Bluetooth SIG HOGP</a> · 键码与 Report Descriptor：<a href="https://www.usb.org/hid">USB-IF HID</a> · 配套课程：<a href="../lessons/0005-from-p2p-to-ble-hid-keyboard.html">从 P2P 到 BLE HID 键盘</a></footer>
+</main>
+</body>
+</html>

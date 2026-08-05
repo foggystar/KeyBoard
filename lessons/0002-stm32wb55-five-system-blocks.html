@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55：BLE 背后的五个系统模块</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <span class="badge">第 2 课 · 约 5 分钟</span>
+  <h1>BLE 背后的五个系统模块</h1>
+  <p class="lede">目标：看到 CubeMX 中的 RCC、HSEM、IPCC、RTC、RNG 时，能够判断它们分别解决哪个问题。</p>
+
+  <h2>先看整个链路</h2>
+  <pre><code>CPU1 应用 ──共享内存── CPU2 无线栈 ── RF ── 手机
+     │         ▲
+     ├─ IPCC：通知对方有消息
+     ├─ HSEM：锁住共享资源
+     ├─ RTC ：安排定时和唤醒
+     ├─ RNG ：提供安全随机数
+     └─ RCC ：给上述模块分配时钟</code></pre>
+
+  <h2>各自做什么</h2>
+  <div class="grid">
+    <div class="card"><strong>RCC · 配电室</strong>启动 HSE、选择时钟源、设置 PLL 和分频，并给外设开时钟。没有正确时钟，CPU 和射频都无法按正确速度工作。</div>
+    <div class="card"><strong>HSEM · 门锁</strong>CPU1 与 CPU2 都可能访问 RCC、Flash 或共享资源。HSEM 确保一次只有一方修改，避免冲突。</div>
+    <div class="card"><strong>IPCC · 门铃</strong>实际数据放在共享内存中；IPCC 用通道和中断通知另一个 CPU“命令或事件已经准备好了”。</div>
+    <div class="card"><strong>RTC · 闹钟</strong>提供低速计时和唤醒。无线软件的定时任务可依赖它；无 LSE 时可用 HSE/32，但功耗较高。</div>
+    <div class="card"><strong>RNG · 骰子</strong>产生难以预测的随机数，用于 BLE 随机地址、配对、安全过程和密钥相关操作。</div>
+  </div>
+
+  <h2>在你的蓝牙测试中</h2>
+  <ol>
+    <li>RCC 启动 32 MHz HSE，并提供 HSE/1024 射频唤醒时钟。</li>
+    <li>CPU1 通过共享内存准备 BLE 命令，并用 IPCC 通知 CPU2。</li>
+    <li>CPU1、CPU2 需要访问共享资源时，用 HSEM 协调。</li>
+    <li>RTC 管理软件定时和唤醒，RNG 为 BLE 安全功能提供随机数。</li>
+    <li>CPU2 执行无线协议栈，再由 RF 电路向手机发出广播。</li>
+  </ol>
+
+  <div class="callout warning"><strong>不要混淆：</strong>IPCC 不负责无线发射；RTC 不是晶振；HSEM 不传输数据；RNG 也不是普通的 <code>rand()</code> 软件函数。</div>
+
+  <h2>30 秒自测</h2>
+  <p>如果 CPU1 已把一条 BLE 命令写入共享内存，但 CPU2 不知道有新命令，最应该检查哪个模块？答案是 <strong>IPCC</strong>。如果两个核同时修改同一个共享资源，应该由 <strong>HSEM</strong> 协调。</p>
+
+  <p>主要参考：<a href="https://www.st.com/resource/en/application_note/an5289-how-to-build-wireless-applications-with-stm32wb-mcus-stmicroelectronics.pdf">ST AN5289 — How to build wireless applications with STM32WB MCUs</a></p>
+  <footer>速查表：<a href="../reference/stm32wb55-system-glossary.html">STM32WB55 系统模块术语表</a>。有任何一个角色仍不清楚，可以继续问我。</footer>
+</main>
+</body>
+</html>

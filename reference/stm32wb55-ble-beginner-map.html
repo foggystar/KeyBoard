@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55 BLE 零基础地图</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <span class="badge">可打印速查</span>
+  <h1>STM32WB55 BLE 零基础地图</h1>
+  <p class="lede">目标：忘记细节时，用一页纸重新找到程序、协议和硬件之间的关系。</p>
+
+  <h2>四个 BLE 基础词</h2>
+  <table>
+    <tr><th>词</th><th>在当前测试中</th><th>一句话</th></tr>
+    <tr><td>Peripheral</td><td>STM32WB55 板</td><td>发出可连接广播，等待手机连接</td></tr>
+    <tr><td>Central</td><td>手机</td><td>扫描广播并发起连接</td></tr>
+    <tr><td>Advertising</td><td><code>P2PSRV1</code></td><td>连接前公开发送“我在这里、我能连接”</td></tr>
+    <tr><td>GATT</td><td>P2P Service/Characteristic</td><td>连接后按服务和特征组织读、写、通知数据</td></tr>
+  </table>
+
+  <h2>STM32WB 数据路径</h2>
+  <pre><code>你的应用 / 按键
+      ↓
+CPU1 Cortex-M4 ──共享内存 + IPCC── CPU2 Cortex-M0+ BLE Stack
+                                      ↓
+                                  2.4 GHz RF
+                                      ↓
+                                     手机</code></pre>
+
+  <h2>从上电到广播</h2>
+  <ol>
+    <li><code>MX_APPE_Config()</code>：在系统时钟前装载 HSE 调谐。</li>
+    <li><code>SystemClock_Config()</code>：启动 HSE/PLL，建立 CPU 时钟。</li>
+    <li><code>MX_IPCC/RTC/RNG/RF_Init()</code>：准备双核通信、计时、随机数和射频。</li>
+    <li><code>MX_APPE_Init()</code>：启动 CPU2 通信，等待无线固件 ready。</li>
+    <li><code>APP_BLE_Init()</code>：初始化 BLE Stack、GAP、GATT 和 P2P 服务。</li>
+    <li><code>aci_gap_set_discoverable()</code>：开始发送 <code>P2PSRV1</code> 广播。</li>
+    <li><code>MX_APPE_Process()</code>：持续处理后续命令和事件。</li>
+  </ol>
+
+  <h2>当前无 LSE 配置</h2>
+  <table>
+    <tr><th>用途</th><th>来源</th><th>结果</th></tr>
+    <tr><td>RF 高频基准</td><td>HSE</td><td>32 MHz</td></tr>
+    <tr><td>RF wake-up</td><td>HSE/1024</td><td>31.25 kHz</td></tr>
+    <tr><td>RTC</td><td>HSE/32</td><td>1 MHz</td></tr>
+    <tr><td>Timer Server</td><td>RTC/16</td><td>16 µs/tick</td></tr>
+    <tr><td>低功耗</td><td><code>CFG_LPM_SUPPORTED=0</code></td><td>先保持 RUN，暂不进入 STOP</td></tr>
+    <tr><td>供电模式</td><td><code>CFG_USE_SMPS=0</code></td><td>使用 LDO 路径，适配当前硬件</td></tr>
+  </table>
+
+  <h2>三阶成功证据</h2>
+  <ol>
+    <li><code>SHCI_C2_BLE_Init() == SHCI_Success</code>：CPU2 BLE 固件存在且通信成功。</li>
+    <li><code>aci_gap_set_discoverable() == BLE_STATUS_SUCCESS</code>：协议栈接受广播请求。</li>
+    <li>手机看到并连接 <code>P2PSRV1</code>：空中射频链路实际工作。</li>
+  </ol>
+
+  <footer>配套课程：<a href="../lessons/0003-from-power-on-to-ble-advertising.html">从上电走到 BLE 广播</a> · <a href="stm32wb55-system-glossary.html">系统模块术语表</a></footer>
+</main>
+</body>
+</html>

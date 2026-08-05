@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55：从 P2P 迁移到 BLE HID 键盘</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+  <script src="../assets/quiz.js" defer></script>
+</head>
+<body>
+<main>
+  <span class="badge">第 5 课 · BLE HID · 约 12 分钟</span>
+  <h1>从 P2P 迁移到 BLE HID 键盘</h1>
+  <p class="lede">本课不追求完整键盘矩阵，只建立最短证据链：操作系统完成配对，并在文本框收到一次 A 键按下和释放。</p>
+
+  <div class="callout"><strong>今天的唯一成果：</strong>知道应该保留哪些已经验证的代码、移植哪些同版本官方文件，以及一个按键如何变成主机看到的字符。</div>
+
+  <h2>1. P2P 和 HID 的差别不是“数据内容”</h2>
+  <table>
+    <tr><th>当前 P2P</th><th>BLE HID 键盘</th></tr>
+    <tr><td>厂商自定义 Service/Characteristic UUID</td><td>Bluetooth SIG 标准 HIDS UUID <code>0x1812</code></td></tr>
+    <tr><td>手机 App 自己解释 <code>01 00</code></td><td>操作系统 HID 驱动按 Report Map 解释 8 字节报告</td></tr>
+    <tr><td>普通连接即可测试</td><td>通常需要配对、加密、绑定并启用 Notification</td></tr>
+    <tr><td>写/读任意特征</td><td>设备通过 Input Report Notification 主动上报按键</td></tr>
+  </table>
+  <p>HOGP 把 HID 设备定义成一个标准 GATT Server；主机是 Report Host。标准化服务和 Report Map 正是“免装专用 App、系统直接当键盘”的原因。参见 <a href="https://www.bluetooth.com/specifications/specs/hid-over-gatt-profile-hogp/">Bluetooth SIG HOGP</a>。</p>
+
+  <h2>2. 不要推倒已经工作的硬件工程</h2>
+  <div class="flow">
+    <div class="flow-step"><strong>保留</strong><br><code>main.c</code>、当前 HSE/PLL、无 LSE 的 RTC/RF 配置、IPCC/HSEM、<code>app_entry.c</code> 和已验证的 CPU2 Full Stack。</div>
+    <div class="flow-arrow">＋</div>
+    <div class="flow-step"><strong>从同版本官方示例移植</strong><br><code>hids.c</code> 的标准服务实现，以及 HIDS 的配置方式、配对与广告逻辑。</div>
+    <div class="flow-arrow">＋</div>
+    <div class="flow-step"><strong>自己写最小键盘应用层</strong><br>45 字节 Keyboard Report Map、8 字节 Input Report、按下/释放两个通知。</div>
+  </div>
+  <p>你本机的权威基准是 <code>STM32Cube_FW_WB_V1.24.0/.../Applications/BLE/BLE_Hid</code>。它没有可供当前板子直接再生成的 <code>.ioc</code>，而且默认应用层是鼠标菜单，因此不能整份覆盖当前工程。</p>
+
+  <h2>3. 推荐迁移顺序</h2>
+  <ol class="checklist">
+    <li>保留 <code>wb55test</code> 作为已知正常基线，另建 <code>wb55hid</code> 工作副本。</li>
+    <li>先只加入 <code>hids.c</code> 和一个最小 <code>hids_app.c/.h</code>；暂时保留 P2P，便于对照。</li>
+    <li>在 <code>ble_conf.h</code> 配置 1 个 HIDS、1 个 Input Report、最大 Report Map 长度至少 45，并设置 Keyboard Appearance <code>961</code>。</li>
+    <li>在 <code>app_ble.c</code> 初始化键盘 Report Map，并在广播 UUID 列表加入 <code>0x1812</code>。</li>
+    <li>初次调试用 Bonding + Just Works：无输入无输出、暂不要求 MITM；产品阶段再设计安全配对。</li>
+    <li>在 CMake 加入新源文件，构建通过后从操作系统蓝牙设置重新配对。</li>
+    <li>Input Report Notification 启用后，发送一次 A press，再立即发送全零 release。</li>
+    <li>主机成功输入一个 <code>a</code> 后，再加入 BAS、DIS、Caps Lock Output Report 和键盘矩阵。</li>
+  </ol>
+  <div class="callout warning"><strong>为什么先保留 P2P：</strong>如果 HID 不工作，P2P 仍能证明基础 BLE 连接没有回归；这样问题只剩服务、Report Map、配对或通知，而不是重新怀疑晶振和 CPU2。</div>
+
+  <h2>4. 一个 A 键到底发送什么</h2>
+  <pre><code>按下 A       00 00 04 00 00 00 00 00
+释放所有键   00 00 00 00 00 00 00 00</code></pre>
+  <p><code>0x04</code> 不是 ASCII 的 <code>'a'</code>；它是 USB HID Keyboard/Keypad Usage Page 中 A 键的位置码。是否显示小写或大写由 Shift/Caps Lock 和主机键盘布局决定。Usage ID 的权威定义见 <a href="https://www.usb.org/hid">USB-IF HID Usage Tables</a>。</p>
+
+  <h2>5. 第一次测试的反馈环</h2>
+  <ol>
+    <li>在手机/电脑蓝牙设置中忘记旧设备，重新扫描并配对。</li>
+    <li>确认设备类别显示为键盘，或服务列表出现 <code>0x1812</code>。</li>
+    <li>在 <code>HIDS_REPORT_NOTIFICATION_ENABLED</code> 事件处观察主机已订阅。</li>
+    <li>打开文本框，触发一次发送任务。</li>
+    <li>结果应是恰好一个 <code>a</code>；没有字符查通知/配对，连续字符查释放报告。</li>
+  </ol>
+
+  <h2>6. 立即自测</h2>
+  <div class="quiz" data-quiz data-answer="0x1812" data-explanation="0x1812 是 Bluetooth SIG 分配给 Human Interface Device Service 的 16 位 UUID。">
+    <p><strong>问题 1：</strong>哪一个 UUID 告诉操作系统“这是 HID 服务”？</p>
+    <div class="choices"><button data-choice="0x1812">0x1812</button><button data-choice="0xFE40">0xFE40</button></div>
+    <p class="feedback" aria-live="polite"></p>
+  </div>
+  <div class="quiz" data-quiz data-answer="释放" data-explanation="全零释放报告结束按键状态，否则主机可能持续重复该键。">
+    <p><strong>问题 2：</strong>发送 A 键按下报告后，下一份必须是什么？</p>
+    <div class="choices"><button data-choice="释放">释放</button><button data-choice="广播">广播</button></div>
+    <p class="feedback" aria-live="polite"></p>
+  </div>
+
+  <h2>完成标准</h2>
+  <pre><code>操作系统完成配对 = 是
+HIDS Input Report Notification 已启用 = 是
+文本框只出现一个 a = 是</code></pre>
+
+  <footer>实现时随手查：<a href="../reference/stm32wb55-ble-hid-keyboard.html">BLE HID 键盘速查</a> · 复习基础：<a href="../reference/stm32wb55-ble-beginner-map.html">BLE 零基础地图</a>。任何一步不清楚，都可以直接问我。</footer>
+</main>
+</body>
+</html>

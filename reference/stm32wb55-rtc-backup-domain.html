@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55 RTC 备份域速查</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <span class="badge">寄存器速查</span>
+  <h1>RTC 备份域：三层链路与两层写保护</h1>
+  <p class="lede">症状：<code>RTC_EnterInitMode()</code> 超时，<code>INITF</code> 不置位。</p>
+
+  <h2>三层链路</h2>
+  <pre><code>PWR_CR1.DBP = 1
+  │  开放备份域写权限
+  ▼
+RCC_BDCR.RTCSEL = HSE/32，RTCEN = 1
+  │  选择并打开 RTC 时钟
+  ▼
+RTC_ISR.INIT = 1  ──硬件确认──▶  RTC_ISR.INITF = 1</code></pre>
+
+  <h2>两层写保护</h2>
+  <table>
+    <tr><th>保护层</th><th>控制位置</th><th>如何解锁</th></tr>
+    <tr><td>备份域外层保护</td><td><code>PWR_CR1.DBP</code></td><td><code>HAL_PWR_EnableBkUpAccess()</code></td></tr>
+    <tr><td>RTC 内层保护</td><td><code>RTC_WPR</code></td><td><code>__HAL_RTC_WRITEPROTECTION_DISABLE()</code></td></tr>
+  </table>
+  <div class="callout warning">只解开 <code>RTC_WPR</code> 不够。如果 <code>DBP=0</code>，整个备份域仍禁止写入。</div>
+
+  <h2>本次错误链</h2>
+  <ol>
+    <li>系统复位后，备份域重新受保护，但 RTCSEL 仍可能保留 HSE/32。</li>
+    <li>生成代码发现时钟源无需改变，因此没有再次调用 <code>HAL_PWR_EnableBkUpAccess()</code>。</li>
+    <li>软件尝试设置 <code>RTC_ISR.INIT</code>，写入没有生效。</li>
+    <li>硬件当然不会返回 <code>INITF=1</code>。</li>
+    <li>HAL 等到超时，返回 <code>HAL_ERROR</code>，最终进入 <code>Error_Handler()</code>。</li>
+  </ol>
+
+  <h2>保留修复</h2>
+  <pre><code>/* USER CODE BEGIN RTC_MspInit 0 */
+HAL_PWR_EnableBkUpAccess();
+/* USER CODE END RTC_MspInit 0 */</code></pre>
+
+  <footer>配套课程：<a href="../lessons/0004-rtc-backup-domain-write-protection.html">为什么 RTC 有时钟却无法初始化</a> · <a href="stm32wb55-system-glossary.html">系统模块术语表</a></footer>
+</main>
+</body>
+</html>

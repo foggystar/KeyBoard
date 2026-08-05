@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55：从上电到手机看到 BLE 广播</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+  <script src="../assets/quiz.js" defer></script>
+</head>
+<body>
+<main>
+  <span class="badge">第 3 课 · 零基础 · 约 12 分钟</span>
+  <h1>从上电到手机看到 BLE 广播</h1>
+  <p class="lede">学完你不需要会写 BLE 协议代码，但应该能说清 <code>main()</code> 怎样启动 CPU2，并用两个断点判断蓝牙卡在哪一层。</p>
+
+  <div class="callout"><strong>今天的唯一成果：</strong>建立一条完整证据链：CPU2 无线栈启动 → 广播命令成功 → 手机看到 <code>P2PSRV1</code>。</div>
+
+  <h2>1. 先只记四个 BLE 词</h2>
+  <table>
+    <tr><th>术语</th><th>在你的项目里</th><th>作用</th></tr>
+    <tr><td>Peripheral（外设）</td><td>STM32WB55 键盘板</td><td>广播并等待连接</td></tr>
+    <tr><td>Central（中心设备）</td><td>手机</td><td>扫描并发起连接</td></tr>
+    <tr><td>Advertising（广播）</td><td><code>P2PSRV1</code></td><td>连接前告诉周围设备“我在这里”</td></tr>
+    <tr><td>GATT</td><td>P2P 服务和特征</td><td>连接后规定数据放在哪里、怎样读写或通知</td></tr>
+  </table>
+  <p>今天只做到“广播”；连接和 GATT 写入放到下一阶段。Bluetooth SIG 的官方 Primer 将 advertising 描述为连接前的无连接通信，并将可被手机连接的设备称为 Peripheral。<a href="https://www.bluetooth.com/bluetooth-le-primer/">阅读官方 BLE Primer</a></p>
+
+  <h2>2. STM32WB55 里有两个 CPU</h2>
+  <pre><code>你的 main.c
+    │
+    ▼
+CPU1 / Cortex-M4                    CPU2 / Cortex-M0+
+运行你的应用       ── IPCC ──▶      运行 ST BLE Stack
+                                      │
+                                      ▼
+                                  2.4 GHz RF ──▶ 手机</code></pre>
+  <p>CPU1 负责你的键盘逻辑和 BLE 应用；CPU2 负责实时性很强的 Link Layer、GAP/GATT 和射频交互。两者通过共享内存传数据、通过 IPCC 发通知。ST 的 <a href="https://www.st.com/resource/en/application_note/an5289-how-to-build-wireless-applications-with-stm32wb-mcus-stmicroelectronics.pdf">AN5289</a> 给出了这套双核分工。</p>
+  <div class="callout warning"><strong>两份固件：</strong>VS Code 平时烧录的是 CPU1 应用；CPU2 的 BLE Wireless Stack 是另一份固件。第一个断点就是用来确认 CPU2 固件是否已经存在。</div>
+
+  <h2>3. 沿着 main() 走一遍</h2>
+  <div class="flow">
+    <div class="flow-step"><strong>① MX_APPE_Config()</strong><br>读取芯片 OTP 中的 HSE 调谐值。它必须早于系统时钟配置。</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-step"><strong>② SystemClock_Config()</strong><br>启动 32 MHz HSE 和 PLL，建立 CPU1 的 64 MHz 系统时钟。</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-step"><strong>③ IPCC / RTC / RNG / RF Init</strong><br>分别准备双核通知、软件定时、随机数和射频子系统。</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-step"><strong>④ MX_APPE_Init()</strong><br>初始化共享邮箱并等待 CPU2 发出 ready 事件；ready 后才进入 BLE 初始化。</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-step"><strong>⑤ APP_BLE_Init()</strong><br>启动 CPU2 BLE Stack，初始化 GAP、GATT 和 P2P 服务，然后请求广播。</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-step"><strong>⑥ MX_APPE_Process()</strong><br>反复运行事件调度器。它必须持续执行，所以 LED 不能再用两次 500 ms 的阻塞延时。</div>
+  </div>
+
+  <h2>4. 你的“无 LSE”配置意味着什么</h2>
+  <table>
+    <tr><th>用途</th><th>你的时钟</th><th>为什么</th></tr>
+    <tr><td>BLE 射频基准</td><td>HSE = 32 MHz</td><td>CPU2 和 2.4 GHz RF 需要准确的高速参考</td></tr>
+    <tr><td>RF 定时唤醒</td><td>HSE/1024 = 31.25 kHz</td><td>代替通常由 LSE 提供的低速参考</td></tr>
+    <tr><td>RTC</td><td>HSE/32 = 1 MHz</td><td>给 CPU1 Timer Server 提供时间基准</td></tr>
+    <tr><td>Timer tick</td><td>RTC/16 = 16 µs</td><td><code>CFG_TS_TICK_VAL</code> 必须与这个真实时钟一致</td></tr>
+  </table>
+  <p><code>CFG_LPM_SUPPORTED=0</code> 表示首次测试保持运行，不进入会关闭 HSE 的深度低功耗；<code>CFG_USE_SMPS=0</code> 表示不启用你尚未补齐电感网络的 SMPS。它们首先是安全的 bring-up 选择，不是最终键盘的功耗方案。</p>
+
+  <h2>5. 第一次实机练习：只看两个返回值</h2>
+  <ol>
+    <li>用 VS Code 编译并通过 ST-LINK 烧录当前 <code>wb55test</code>。</li>
+    <li>在 <a href="../wb55test/STM32_WPAN/App/app_ble.c"><code>app_ble.c</code></a> 的 <code>SHCI_C2_BLE_Init()</code> 后打断点。</li>
+    <li>运行并单步越过调用，查看 <code>status</code>：目标是 <code>SHCI_Success</code>（通常为 0）。</li>
+    <li>继续运行，在 <code>aci_gap_set_discoverable()</code> 后停下，查看 <code>ret</code>：目标是 <code>BLE_STATUS_SUCCESS</code>（通常为 0）。</li>
+    <li>继续运行，不要停在断点；手机扫描 <code>P2PSRV1</code>。</li>
+  </ol>
+
+  <table>
+    <tr><th>停在哪里</th><th>你已经证明</th><th>下一嫌疑</th></tr>
+    <tr><td>第一个调用前</td><td>CPU1 时钟和初始化至少走到 BLE</td><td>继续看 CPU2 返回值</td></tr>
+    <tr><td><code>SHCI_Success</code></td><td>CPU2 Stack 存在，IPCC 通信基本正常</td><td>GAP/GATT 和广播请求</td></tr>
+    <tr><td><code>BLE_STATUS_SUCCESS</code></td><td>协议栈接受了广播配置</td><td>HSE 实际频偏、RF 匹配和天线</td></tr>
+    <tr><td>手机看到名称</td><td>广播数据真的经过射频到达手机</td><td>下一课测试连接与 GATT</td></tr>
+  </table>
+
+  <h2>6. 立即自测</h2>
+  <div class="quiz" data-quiz data-answer="CPU2" data-explanation="CPU2 的 Cortex-M0+ 运行 ST 的 BLE Wireless Stack。">
+    <p><strong>问题 1：</strong>STM32WB55 中，哪一个 CPU 运行 BLE Wireless Stack？</p>
+    <div class="choices"><button data-choice="CPU1">CPU1</button><button data-choice="CPU2">CPU2</button></div>
+    <p class="feedback" aria-live="polite"></p>
+  </div>
+  <div class="quiz" data-quiz data-answer="IPCC" data-explanation="IPCC 像双向门铃，通知另一个 CPU 有新命令或事件。">
+    <p><strong>问题 2：</strong>CPU1 已写好共享数据，哪个模块负责通知 CPU2？</p>
+    <div class="choices"><button data-choice="HSEM">HSEM</button><button data-choice="IPCC">IPCC</button></div>
+    <p class="feedback" aria-live="polite"></p>
+  </div>
+  <div class="quiz" data-quiz data-answer="HSE" data-explanation="当前板没有 LSE，所以用 HSE/1024 提供 RF wake-up 参考。">
+    <p><strong>问题 3：</strong>当前板的 RF wake-up 低速参考由哪个晶振派生？</p>
+    <div class="choices"><button data-choice="HSE">HSE</button><button data-choice="LSE">LSE</button></div>
+    <p class="feedback" aria-live="polite"></p>
+  </div>
+
+  <h2>完成标准</h2>
+  <p>把下面三个结果告诉我即可，不需要先理解所有生成代码：</p>
+  <pre><code>status = ?
+ret    = ?
+手机能否看到 P2PSRV1 = ?</code></pre>
+
+  <footer>复习：<a href="../reference/stm32wb55-ble-beginner-map.html">BLE 零基础地图</a> · <a href="0002-stm32wb55-five-system-blocks.html">五个系统模块</a> · <a href="0001-stm32wb55-ble-smoke-test.html">完整冒烟测试</a>。任何一步不清楚，都可以直接问我。</footer>
+</main>
+</body>
+</html>

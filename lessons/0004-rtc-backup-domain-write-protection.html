@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32WB55：为什么 RTC 有时钟却无法初始化</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+  <script src="../assets/quiz.js" defer></script>
+</head>
+<body>
+<main>
+  <span class="badge">第 4 课 · 真实故障 · 约 10 分钟</span>
+  <h1>为什么 RTC 有时钟却无法初始化</h1>
+  <p class="lede">目标：看懂调用栈、HAL 返回值和 RTC 的两层写保护，并能解释为什么缺一行代码会让 <code>INITF</code> 永远不置位。</p>
+
+  <h2>1. 调用栈告诉了我们什么</h2>
+  <pre><code>main()
+  └─ MX_RTC_Init()
+       └─ HAL_RTC_Init()
+            └─ RTC_EnterInitMode() → HAL_ERROR
+                 └─ Error_Handler()</code></pre>
+  <p>这条调用栈证明错误发生在 BLE 初始化之前。<code>Error_Handler()</code> 只是统一的“错误停车场”；真正根因是 <code>RTC_EnterInitMode()</code> 返回失败。</p>
+
+  <h2>2. 简写和名词逐一翻译</h2>
+  <table>
+    <tr><th>简写/名词</th><th>英文</th><th>这里的含义</th></tr>
+    <tr><td><code>RTC</code></td><td>Real-Time Clock</td><td>实时时钟外设，负责计时、闹钟和定时唤醒</td></tr>
+    <tr><td><code>HAL</code></td><td>Hardware Abstraction Layer</td><td>ST 的硬件抽象层，把寄存器操作包装成 C 函数</td></tr>
+    <tr><td><code>MSP</code></td><td>MCU Support Package</td><td>HAL 外设初始化时调用的底层硬件准备函数，例如开时钟和设置中断</td></tr>
+    <tr><td><code>PWR</code></td><td>Power Control</td><td>电源控制模块，也掌管备份域写权限</td></tr>
+    <tr><td><code>RCC</code></td><td>Reset and Clock Control</td><td>复位与时钟控制，选择 RTC 的时钟来源</td></tr>
+    <tr><td><code>HSE</code></td><td>High-Speed External</td><td>外部高速晶振；当前是 32 MHz</td></tr>
+    <tr><td><code>CR1</code></td><td>Control Register 1</td><td>控制寄存器 1；<code>PWR_CR1</code> 中包含 DBP 位</td></tr>
+    <tr><td><code>BDCR</code></td><td>Backup Domain Control Register</td><td>备份域控制寄存器；保存 RTC 时钟选择和使能</td></tr>
+    <tr><td><code>DBP</code></td><td>Disable Backup-domain write Protection</td><td>置 1 后才允许软件写备份域</td></tr>
+    <tr><td><code>ISR</code></td><td>Initialization and Status Register</td><td>RTC 初始化和状态寄存器</td></tr>
+    <tr><td><code>INIT</code></td><td>Initialization mode request</td><td>软件写 1，请求进入 RTC 初始化模式</td></tr>
+    <tr><td><code>INITF</code></td><td>Initialization Flag</td><td>硬件置 1，确认已经进入初始化模式</td></tr>
+    <tr><td><code>WPR</code></td><td>Write Protection Register</td><td>RTC 自己的内部写保护寄存器</td></tr>
+    <tr><td><code>HAL_OK</code></td><td>HAL success status</td><td>HAL 函数成功，通常数值为 0</td></tr>
+    <tr><td><code>HAL_ERROR</code></td><td>HAL failure status</td><td>HAL 函数失败，通常数值为 1</td></tr>
+  </table>
+
+  <h2>3. 备份域是什么</h2>
+  <p>备份域是芯片中特意独立出来的一小块区域，包括 RTC、备份寄存器以及相关时钟控制。它的目的，是让普通系统复位甚至主电源变化时，时间和少量关键数据仍有机会保留。</p>
+  <p>正因为它要“保留”，STM32 对它加了额外保护。ST 的 <a href="https://www.st.com/resource/en/reference_manual/dm00318631.pdf">RM0434 参考手册</a>规定：系统复位后，备份域默认禁止写入；必须把 <code>PWR_CR1.DBP</code> 置 1 才能写。</p>
+
+  <h2>4. 两把锁，而不是一把锁</h2>
+  <div class="grid">
+    <div class="card"><strong>外层锁：DBP</strong>保护整个备份域。调用 <code>HAL_PWR_EnableBkUpAccess()</code> 打开。</div>
+    <div class="card"><strong>内层锁：RTC_WPR</strong>保护 RTC 配置寄存器。HAL 通过写入特定解锁序列打开。</div>
+  </div>
+  <p><code>HAL_RTC_Init()</code> 已经执行了 <code>__HAL_RTC_WRITEPROTECTION_DISABLE()</code>，它只打开内层锁。如果外层的 <code>DBP</code> 仍是 0，软件还是不能修改 RTC。</p>
+
+  <h2>5. 本次故障是怎样形成的</h2>
+  <div class="flow">
+    <div class="flow-step"><strong>① 系统复位</strong><br>备份域写权限恢复为禁止，但 RTC 时钟选择可能继续保留为 HSE/32。</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-step"><strong>② CubeMX 生成代码检查 RTCSEL</strong><br>发现当前已经是 HSE/32，于是不需要切换时钟源。</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-step"><strong>③ 缺少无条件解锁</strong><br><code>HAL_RTC_MspInit()</code> 没有主动调用 <code>HAL_PWR_EnableBkUpAccess()</code>，所以 <code>DBP=0</code>。</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-step"><strong>④ INIT 写入无效</strong><br>软件请求进入初始化模式，但备份域仍禁止写。</div>
+    <div class="flow-arrow">↓</div>
+    <div class="flow-step"><strong>⑤ INITF 永不返回</strong><br>硬件没有收到有效请求，HAL 等待超时并返回 <code>HAL_ERROR</code>。</div>
+  </div>
+
+  <h2>6. 为什么这一行能修复</h2>
+  <pre><code>/* USER CODE BEGIN RTC_MspInit 0 */
+HAL_PWR_EnableBkUpAccess();   // PWR_CR1.DBP = 1
+/* USER CODE END RTC_MspInit 0 */</code></pre>
+  <p>调用后，外层写保护被解除。随后 HAL 再解开 RTC_WPR 内层保护，设置 <code>INIT=1</code>；RTC 硬件确认后设置 <code>INITF=1</code>，初始化继续执行。ST 对相同的 STM32WB 超时现象也给出了这一修复。<a href="https://community.st.com/stm32-mcus-embedded-software-32/init-rtc-failed-timeout-error-stm32wb10cc-123993">查看 ST 技术答复</a></p>
+
+  <h2>7. 自测</h2>
+  <div class="quiz" data-quiz data-answer="DBP" data-explanation="DBP 位控制整个备份域的写访问权限。">
+    <p><strong>问题 1：</strong>必须先置 1 的备份域访问控制位是什么？</p>
+    <div class="choices"><button data-choice="DBP">DBP</button><button data-choice="RTC">RTC</button></div>
+    <p class="feedback" aria-live="polite"></p>
+  </div>
+  <div class="quiz" data-quiz data-answer="硬件" data-explanation="软件写 INIT 发出请求，RTC 硬件用 INITF 确认。">
+    <p><strong>问题 2：</strong><code>INITF</code> 最终由谁置位？</p>
+    <div class="choices"><button data-choice="硬件">硬件</button><button data-choice="软件">软件</button></div>
+    <p class="feedback" aria-live="polite"></p>
+  </div>
+  <div class="quiz" data-quiz data-answer="之前" data-explanation="调用栈停在 MX_RTC_Init，尚未执行 MX_APPE_Init 和 BLE 初始化。">
+    <p><strong>问题 3：</strong>这次错误发生在 BLE 初始化之前还是之后？</p>
+    <div class="choices"><button data-choice="之前">之前</button><button data-choice="之后">之后</button></div>
+    <p class="feedback" aria-live="polite"></p>
+  </div>
+
+  <footer>速查：<a href="../reference/stm32wb55-rtc-backup-domain.html">RTC 备份域寄存器链</a> · 前一课：<a href="0003-from-power-on-to-ble-advertising.html">从上电到 BLE 广播</a>。如果某个寄存器名仍不清楚，继续问我即可。</footer>
+</main>
+</body>
+</html>
